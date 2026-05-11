@@ -9,7 +9,7 @@ import FormInput from '../components/ui/FormInput';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 
 const fmt = (n) => new Intl.NumberFormat('fr-MA').format(n ?? 0);
-const IMG_BASE = 'http://localhost:5000/uploads/';
+const IMG_BASE = `${import.meta.env.VITE_API_URL || ''}/uploads/`;
 const empty = { name: '', category: '', supplier: '', quantity: 0, lowStockThreshold: 5, costPrice: 0, sellingPrice: 0, status: 'available', notes: '' };
 const statusOpts = [{ value: 'available', label: 'Available' }, { value: 'reserved', label: 'Reserved' }, { value: 'sold', label: 'Sold' }];
 
