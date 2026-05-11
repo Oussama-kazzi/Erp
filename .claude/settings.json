@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(node -e \"const l = require\\('lucide-react'\\); console.log\\('ArrowDownToLine:', !!l.ArrowDownToLine, 'ArrowUpFromLine:', !!l.ArrowUpFromLine, 'version check done'\\)\")",
-      "Bash(node -e \"const j = require\\('jspdf'\\); console.log\\('jspdf ok'\\); const a = require\\('jspdf-autotable'\\); console.log\\('autotable ok'\\)\")"
+      "Bash(node -e \"const j = require\\('jspdf'\\); console.log\\('jspdf ok'\\); const a = require\\('jspdf-autotable'\\); console.log\\('autotable ok'\\)\")",
+      "Bash(node_modules/.bin/vite --version)",
+      "Bash(findstr '\"version\"')",
+      "Bash(npm show *)",
+      "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\(0,'utf8'\\);const v=JSON.parse\\(d\\);console.log\\('jspdf latest versions:',v.slice\\(-5\\).join\\(', '\\)\\)\")"
     ]
   }
 }
