@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const l = require\\('lucide-react'\\); console.log\\('ArrowDownToLine:', !!l.ArrowDownToLine, 'ArrowUpFromLine:', !!l.ArrowUpFromLine, 'version check done'\\)\")",
+      "Bash(node -e \"const j = require\\('jspdf'\\); console.log\\('jspdf ok'\\); const a = require\\('jspdf-autotable'\\); console.log\\('autotable ok'\\)\")"
+    ]
+  }
+}
