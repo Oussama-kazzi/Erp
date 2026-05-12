@@ -3,10 +3,9 @@ import toast from 'react-hot-toast';
 import { Upload, X, Building2, Palette } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
+import { supabase } from '../lib/supabase';
 import FormInput from '../components/ui/FormInput';
-import api from '../api';
 
-// ─── Color Picker field ──────────────────────────────────────────────────────
 const ColorField = ({ label, value, onChange }) => (
   <div>
     <label className="label">{label}</label>
@@ -45,7 +44,7 @@ const Settings = () => {
   const { company, refresh } = useCompany();
 
   // ── Password form ──────────────────────────────────────────────────────
-  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwForm, setPwForm] = useState({ newPassword: '', confirmPassword: '' });
   const [pwSaving, setPwSaving] = useState(false);
 
   const handlePasswordChange = async (e) => {
@@ -54,10 +53,11 @@ const Settings = () => {
     if (pwForm.newPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     setPwSaving(true);
     try {
-      await api.put('/auth/password', { currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword });
+      const { error } = await supabase.auth.updateUser({ password: pwForm.newPassword });
+      if (error) throw error;
       toast.success('Password updated');
-      setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+      setPwForm({ newPassword: '', confirmPassword: '' });
+    } catch (err) { toast.error(err.message || 'Error'); }
     finally { setPwSaving(false); }
   };
 
@@ -73,7 +73,6 @@ const Settings = () => {
   const [brandSaving, setBrandSaving] = useState(false);
   const fileRef = useRef();
 
-  // Sync brand state from context when loaded
   useEffect(() => {
     setBrand({
       companyName:    company.companyName    || '',
@@ -86,7 +85,7 @@ const Settings = () => {
       primaryColor:   company.primaryColor   || '#1A1714',
       secondaryColor: company.secondaryColor || '#B8936A',
     });
-    setLogoPreview(company.logoUrl ? company.logoUrl : null);
+    setLogoPreview(company.logoUrl || null);
   }, [company]);
 
   const handleLogoFile = (file) => {
@@ -104,24 +103,49 @@ const Settings = () => {
   const removeLogo = async () => {
     if (logoFile) { setLogoFile(null); setLogoPreview(company.logoUrl || null); return; }
     try {
-      await api.delete('/settings/logo');
+      const { error } = await supabase.from('company_settings').update({ logo_url: null }).eq('id', 1);
+      if (error) throw error;
       setLogoPreview(null);
       await refresh();
       toast.success('Logo removed');
     } catch { toast.error('Error'); }
   };
 
+  const uploadLogo = async (file) => {
+    const ext = file.name.split('.').pop();
+    const filename = `logo-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('logos').upload(filename, file, { upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from('logos').getPublicUrl(filename);
+    return data.publicUrl;
+  };
+
   const handleBrandSave = async (e) => {
     e.preventDefault(); setBrandSaving(true);
     try {
-      const fd = new FormData();
-      Object.entries(brand).forEach(([k, v]) => fd.append(k, v));
-      if (logoFile) fd.append('logo', logoFile);
-      await api.put('/settings', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      let logo_url = company.logoUrl || null;
+      if (logoFile) {
+        logo_url = await uploadLogo(logoFile);
+      }
+      const payload = {
+        id: 1,
+        company_name:    brand.companyName    || null,
+        company_email:   brand.companyEmail   || null,
+        company_phone:   brand.companyPhone   || null,
+        company_address: brand.companyAddress || null,
+        company_city:    brand.companyCity    || null,
+        ice:             brand.ice            || null,
+        rc:              brand.rc             || null,
+        primary_color:   brand.primaryColor,
+        secondary_color: brand.secondaryColor,
+        logo_url,
+      };
+      const { error } = await supabase.from('company_settings').upsert(payload);
+      if (error) throw error;
       await refresh();
       setLogoFile(null);
       toast.success('Branding saved');
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.message || 'Error'); }
     finally { setBrandSaving(false); }
   };
 
@@ -163,8 +187,6 @@ const Settings = () => {
       <div className="card p-6">
         <h2 className="section-title mb-5">Security</h2>
         <form onSubmit={handlePasswordChange} className="space-y-4">
-          <FormInput label="Current Password" type="password" value={pwForm.currentPassword}
-            onChange={e => setPwForm({ ...pwForm, currentPassword: e.target.value })} required />
           <div className="grid grid-cols-2 gap-4">
             <FormInput label="New Password" type="password" value={pwForm.newPassword}
               onChange={e => setPwForm({ ...pwForm, newPassword: e.target.value })} required />
@@ -207,10 +229,7 @@ const Settings = () => {
                   <p className="text-[11px] text-sand-400 mt-0.5">Ce logo apparaîtra dans tous vos documents</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  <label
-                    htmlFor="logo-upload"
-                    className="btn-secondary btn-sm cursor-pointer"
-                  >
+                  <label htmlFor="logo-upload" className="btn-secondary btn-sm cursor-pointer">
                     <Upload className="w-3.5 h-3.5" strokeWidth={1.5} />
                     Changer
                   </label>

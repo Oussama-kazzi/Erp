@@ -7,7 +7,7 @@ import { Package, Ruler, HardHat } from 'lucide-react';
 const Login = () => {
   const { login, user } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: 'admin@erp.com', password: 'admin123' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
 
   if (user) { navigate('/'); return null; }
@@ -31,11 +31,9 @@ const Login = () => {
 
       {/* Left panel — branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-atelier-dark flex-col justify-between p-12 relative overflow-hidden">
-        {/* Decorative circles */}
         <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-white/5 pointer-events-none" />
         <div className="absolute -bottom-32 -left-16 w-80 h-80 rounded-full bg-bronze-600/20 pointer-events-none" />
 
-        {/* Logo */}
         <div className="flex items-center gap-3 relative z-10">
           <div className="w-10 h-10 bg-bronze-500 rounded-xl flex items-center justify-center">
             <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -48,7 +46,6 @@ const Login = () => {
           </div>
         </div>
 
-        {/* Headline */}
         <div className="relative z-10">
           <h1 className="text-5xl font-medium text-white leading-tight mb-4" style={{ fontFamily: '"Cormorant Garamond", serif' }}>
             Craft. Create.<br />Manage.
@@ -79,7 +76,6 @@ const Login = () => {
       {/* Right panel — form */}
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-sm">
-          {/* Mobile logo */}
           <div className="flex items-center gap-2 mb-10 lg:hidden">
             <div className="w-8 h-8 bg-atelier-dark rounded-xl flex items-center justify-center">
               <svg className="w-4 h-4 text-bronze-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -131,12 +127,6 @@ const Login = () => {
               ) : 'Sign in to Atelier'}
             </button>
           </form>
-
-          <div className="mt-6 p-3 bg-sand-100 rounded-xl border border-sand-200">
-            <p className="text-xs text-sand-500 text-center">
-              Default access: <span className="text-sand-700 font-medium">admin@erp.com</span> / <span className="text-sand-700 font-medium">admin123</span>
-            </p>
-          </div>
         </div>
       </div>
     </div>

@@ -90,7 +90,7 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
   doc.line(ML, headerH - 6, W - MR, headerH - 6);
 
   // Quote number + date
-  const dateStr = new Date(quote.createdAt || Date.now()).toLocaleDateString('fr-FR', {
+  const dateStr = new Date(quote.created_at || Date.now()).toLocaleDateString('fr-FR', {
     day: '2-digit', month: 'long', year: 'numeric',
   });
   doc.setFont('helvetica', 'bold');
@@ -98,7 +98,7 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
   doc.setTextColor(...C.light);
   doc.text('DEVIS', ML, headerH - 1.5);
   doc.setTextColor(...C.white);
-  doc.text(quote.quoteNumber || 'DEV-XXXX', ML + 14, headerH - 1.5);
+  doc.text(quote.quote_number || 'DEV-XXXX', ML + 14, headerH - 1.5);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(...C.light);
@@ -121,7 +121,7 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
   doc.setTextColor(...C.black);
   doc.text(co.companyName, ML, y);
 
-  const clientName = quote.client?.fullName || '—';
+  const clientName = quote.client?.full_name || '—';
   doc.text(clientName, col2, y);
   y += 5;
 
@@ -142,8 +142,8 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
   let cy = y - fromLines.length * 4.5;
   if (quote.client?.phone)   { doc.text(`Tél : ${quote.client.phone}`, col2, cy); cy += 4.5; }
   if (quote.client?.address) { doc.text(quote.client.address, col2, cy); cy += 4.5; }
-  if (quote.validUntil) {
-    const vu = new Date(quote.validUntil).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+  if (quote.valid_until) {
+    const vu = new Date(quote.valid_until).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
     doc.text(`Valable jusqu'au : ${vu}`, col2, cy);
   }
 
@@ -168,12 +168,12 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
     ];
   });
 
-  if ((quote.laborCost || 0) > 0) {
+  if ((quote.labor_cost || 0) > 0) {
     rows.push([
       { content: "Main d'œuvre", styles: { fontStyle: 'italic' } },
       { content: '1',                                                        styles: { halign: 'center' } },
-      { content: `${fmtNum(quote.laborCost)} MAD`,                          styles: { halign: 'right' } },
-      { content: `${fmtNum(quote.laborCost)} MAD`,                          styles: { halign: 'right', fontStyle: 'bold' } },
+      { content: `${fmtNum(quote.labor_cost)} MAD`,                         styles: { halign: 'right' } },
+      { content: `${fmtNum(quote.labor_cost)} MAD`,                         styles: { halign: 'right', fontStyle: 'bold' } },
     ]);
   }
 
@@ -209,7 +209,7 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
 
   // ── TOTALS ─────────────────────────────────────────────────────────────
   const itemsHT    = items.reduce((s, i) => s + (Number(i.quantity) || 0) * i.unitPrice, 0);
-  const labor      = quote.laborCost || 0;
+  const labor      = quote.labor_cost || 0;
   const subtotalHT = itemsHT + labor;
   const tva        = subtotalHT * TVA_RATE;
   const totalTTC   = subtotalHT + tva;
@@ -333,7 +333,7 @@ export const generateQuotePDF = async (quote, companyRaw = {}) => {
 // ─── Convenience wrappers ────────────────────────────────────────────────────
 export const downloadQuotePDF = async (quote, company) => {
   const doc = await generateQuotePDF(quote, company);
-  doc.save(`${quote.quoteNumber || 'Devis'}.pdf`);
+  doc.save(`${quote.quote_number || 'Devis'}.pdf`);
 };
 
 export const previewQuotePDF = async (quote, company) => {

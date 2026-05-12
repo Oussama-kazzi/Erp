@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(cmd.exe /c \"rmdir /s /q \\\\\"c:\\\\Users\\\\PC\\\\Desktop\\\\project\\\\erp\\\\backend\\\\\"\")",
+      "PowerShell(Get-ChildItem \"c:\\\\Users\\\\PC\\\\Desktop\\\\project\\\\erp\\\\backend\" -Recurse | Where-Object { -not $_.PSIsContainer } | Select-Object FullName)"
     ]
   }
 }

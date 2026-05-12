@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api from '../api';
+import { supabase } from '../lib/supabase';
 
 const CompanyContext = createContext(null);
 
@@ -21,8 +21,21 @@ export const CompanyProvider = ({ children }) => {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await api.get('/settings');
-      setCompany({ ...COMPANY_DEFAULTS, ...res.data });
+      const { data } = await supabase.from('company_settings').select('*').eq('id', 1).single();
+      if (data) {
+        setCompany({
+          companyName:    data.company_name    || COMPANY_DEFAULTS.companyName,
+          companyEmail:   data.company_email   || COMPANY_DEFAULTS.companyEmail,
+          companyPhone:   data.company_phone   || '',
+          companyAddress: data.company_address || '',
+          companyCity:    data.company_city    || COMPANY_DEFAULTS.companyCity,
+          ice:            data.ice             || '',
+          rc:             data.rc              || '',
+          logoUrl:        data.logo_url        || '',
+          primaryColor:   data.primary_color   || COMPANY_DEFAULTS.primaryColor,
+          secondaryColor: data.secondary_color || COMPANY_DEFAULTS.secondaryColor,
+        });
+      }
     } catch { /* use defaults */ }
   }, []);
 

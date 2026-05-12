@@ -77,7 +77,7 @@ const buildHTML = ({ title, docNumber, docDate, extra, client, items, laborCost,
     </div>
     <div>
       <div class="party-label">Bill To</div>
-      <div class="party-name">${client?.fullName || '—'}</div>
+      <div class="party-name">${client?.full_name || '—'}</div>
       <div class="party-info">
         ${client?.phone ? `Tel: ${client.phone}<br>` : ''}
         ${client?.address || ''}
@@ -116,18 +116,18 @@ const buildHTML = ({ title, docNumber, docDate, extra, client, items, laborCost,
 };
 
 export const printQuote = (quote) => {
-  const validUntil = quote.validUntil
-    ? new Date(quote.validUntil).toLocaleDateString('fr-MA')
+  const validUntil = quote.valid_until
+    ? new Date(quote.valid_until).toLocaleDateString('fr-MA')
     : null;
   const html = buildHTML({
     title: 'DEVIS',
-    docNumber: quote.quoteNumber,
-    docDate: new Date(quote.createdAt).toLocaleDateString('fr-MA'),
+    docNumber: quote.quote_number,
+    docDate: new Date(quote.created_at).toLocaleDateString('fr-MA'),
     extra: validUntil ? `Valable jusqu'au: ${validUntil}` : null,
     client: quote.client,
     items: quote.items,
-    laborCost: quote.laborCost || 0,
-    total: quote.totalPrice,
+    laborCost: quote.labor_cost || 0,
+    total: quote.total_price,
     notes: quote.notes,
   });
   const win = window.open('', '_blank', 'width=900,height=1100');
@@ -136,18 +136,18 @@ export const printQuote = (quote) => {
 };
 
 export const printInvoice = (invoice) => {
-  const dueDate = invoice.dueDate
-    ? new Date(invoice.dueDate).toLocaleDateString('fr-MA')
+  const dueDate = invoice.due_date
+    ? new Date(invoice.due_date).toLocaleDateString('fr-MA')
     : null;
   const html = buildHTML({
     title: 'FACTURE',
-    docNumber: invoice.invoiceNumber,
-    docDate: new Date(invoice.createdAt).toLocaleDateString('fr-MA'),
+    docNumber: invoice.invoice_number,
+    docDate: new Date(invoice.created_at).toLocaleDateString('fr-MA'),
     extra: dueDate ? `Échéance: ${dueDate}` : null,
     client: invoice.client,
     items: invoice.items,
-    laborCost: invoice.laborCost || 0,
-    total: invoice.totalAmount,
+    laborCost: invoice.labor_cost || 0,
+    total: invoice.total_amount,
     notes: invoice.notes,
   });
   const win = window.open('', '_blank', 'width=900,height=1100');

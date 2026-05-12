@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import { Users, Plus, Phone, MapPin, ClipboardList, TrendingUp } from 'lucide-react';
-import api from '../api';
+import { Users, Plus, Phone, MapPin, ClipboardList } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { logHistory } from '../lib/history';
 import Modal from '../components/ui/Modal';
 import FormInput from '../components/ui/FormInput';
 import SearchInput from '../components/ui/SearchInput';
@@ -9,7 +10,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 
 const fmt = (n) => new Intl.NumberFormat('fr-MA').format(n ?? 0);
-const empty = { fullName: '', phone: '', address: '', notes: '' };
+const empty = { full_name: '', phone: '', address: '', notes: '' };
 
 const Clients = () => {
   const [clients, setClients] = useState([]);
@@ -24,8 +25,11 @@ const Clients = () => {
   const fetchClients = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get('/clients', { params: search ? { search } : {} });
-      setClients(res.data.clients);
+      let query = supabase.from('clients').select('*').order('created_at', { ascending: false });
+      if (search) query = query.ilike('full_name', `%${search}%`);
+      const { data, error } = await query;
+      if (error) throw error;
+      setClients(data || []);
     } catch { toast.error('Failed to load clients'); }
     finally { setLoading(false); }
   }, [search]);
@@ -38,9 +42,18 @@ const Clients = () => {
   const openProfile = async (c) => {
     setSelected(c);
     setModal('profile');
+    setProfileData(null);
     try {
-      const res = await api.get(`/clients/${c._id}`);
-      setProfileData(res.data);
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('id, items, status, order_date, total_price, remaining_amount, advance_payment')
+        .eq('client_id', c.id)
+        .order('created_at', { ascending: false });
+
+      const totalOrders = orders?.length || 0;
+      const totalPaid = (orders || []).reduce((s, o) => s + (o.advance_payment || 0), 0);
+      const totalRemaining = (orders || []).reduce((s, o) => s + (o.remaining_amount || 0), 0);
+      setProfileData({ stats: { totalOrders, totalPaid, totalRemaining }, orders: orders || [] });
     } catch { toast.error('Failed to load client profile'); }
   };
   const closeModal = () => { setModal(null); setSelected(null); setProfileData(null); };
@@ -48,31 +61,38 @@ const Clients = () => {
   const handleSave = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      if (modal === 'add') await api.post('/clients', form);
-      else await api.put(`/clients/${selected._id}`, form);
+      if (modal === 'add') {
+        const { data, error } = await supabase.from('clients').insert(form).select().single();
+        if (error) throw error;
+        await logHistory({ action: 'created', module: 'client', description: `Client "${form.full_name}" added`, referenceId: data.id });
+      } else {
+        const { error } = await supabase.from('clients').update(form).eq('id', selected.id);
+        if (error) throw error;
+        await logHistory({ action: 'updated', module: 'client', description: `Client "${form.full_name}" updated`, referenceId: selected.id });
+      }
       toast.success(modal === 'add' ? 'Client added' : 'Client updated');
       closeModal(); fetchClients();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.message || 'Error'); }
     finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     setSaving(true);
-    try { await api.delete(`/clients/${selected._id}`); toast.success('Client removed'); closeModal(); fetchClients(); }
-    catch { toast.error('Error'); } finally { setSaving(false); }
+    try {
+      await supabase.from('clients').delete().eq('id', selected.id);
+      await logHistory({ action: 'deleted', module: 'client', description: `Client "${selected.full_name}" removed` });
+      toast.success('Client removed'); closeModal(); fetchClients();
+    } catch { toast.error('Error'); } finally { setSaving(false); }
   };
 
   const initials = (name = '') => name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-3">
-          <div className="card px-4 py-2.5 flex items-center gap-2">
-            <span className="text-sand-400 text-xs uppercase tracking-wide">Total</span>
-            <span className="text-atelier-dark font-semibold">{clients.length} clients</span>
-          </div>
+        <div className="card px-4 py-2.5 flex items-center gap-2">
+          <span className="text-sand-400 text-xs uppercase tracking-wide">Total</span>
+          <span className="text-atelier-dark font-semibold">{clients.length} clients</span>
         </div>
         <button onClick={openAdd} className="btn-primary">
           <Plus className="w-4 h-4" strokeWidth={2} />
@@ -80,12 +100,10 @@ const Clients = () => {
         </button>
       </div>
 
-      {/* Search */}
       <div className="card p-4">
         <SearchInput value={search} onChange={setSearch} placeholder="Search clients by name..." />
       </div>
 
-      {/* Grid */}
       {loading ? (
         <div className="flex justify-center py-16">
           <div className="w-7 h-7 border-2 border-sand-200 border-t-bronze-400 rounded-full animate-spin" />
@@ -100,13 +118,13 @@ const Clients = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {clients.map(c => (
-            <div key={c._id} className="card p-5 card-hover">
+            <div key={c.id} className="card p-5 card-hover">
               <div className="flex items-start gap-4 mb-4">
                 <div className="w-11 h-11 rounded-xl bg-bronze-100 flex items-center justify-center text-bronze-700 font-semibold text-sm shrink-0">
-                  {initials(c.fullName)}
+                  {initials(c.full_name)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-atelier-dark text-[14px] truncate">{c.fullName}</p>
+                  <p className="font-semibold text-atelier-dark text-[14px] truncate">{c.full_name}</p>
                   {c.phone && (
                     <div className="flex items-center gap-1.5 mt-0.5 text-sand-400">
                       <Phone className="w-3 h-3" strokeWidth={1.5} />
@@ -127,7 +145,7 @@ const Clients = () => {
               )}
 
               <p className="text-[10px] text-sand-400 uppercase tracking-wider mb-1">
-                Added {new Date(c.createdAt).toLocaleDateString('fr-MA')}
+                Added {new Date(c.created_at).toLocaleDateString('fr-MA')}
               </p>
 
               <div className="flex gap-2 mt-3 pt-3 border-t border-sand-100">
@@ -147,10 +165,9 @@ const Clients = () => {
         </div>
       )}
 
-      {/* Add/Edit Modal */}
       <Modal isOpen={modal === 'add' || modal === 'edit'} onClose={closeModal} title={modal === 'add' ? 'New Client' : 'Edit Client'} size="sm">
         <form onSubmit={handleSave} className="space-y-4">
-          <FormInput label="Full Name" value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} required />
+          <FormInput label="Full Name" value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} required />
           <FormInput label="Phone" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
           <FormInput label="Address" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
           <FormInput label="Notes" type="textarea" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
@@ -161,15 +178,13 @@ const Clients = () => {
         </form>
       </Modal>
 
-      {/* Client Profile Modal */}
-      <Modal isOpen={modal === 'profile'} onClose={closeModal} title={`Client — ${selected?.fullName}`} size="lg">
+      <Modal isOpen={modal === 'profile'} onClose={closeModal} title={`Client — ${selected?.full_name}`} size="lg">
         {!profileData ? (
           <div className="flex justify-center py-8">
             <div className="w-7 h-7 border-2 border-sand-200 border-t-bronze-400 rounded-full animate-spin" />
           </div>
         ) : (
           <div className="space-y-5">
-            {/* Stats */}
             <div className="grid grid-cols-3 gap-3">
               {[
                 { label: 'Total Orders', value: profileData.stats.totalOrders },
@@ -182,8 +197,6 @@ const Clients = () => {
                 </div>
               ))}
             </div>
-
-            {/* Order history */}
             <div>
               <p className="text-[11px] font-semibold text-sand-500 uppercase tracking-wider mb-2">Order History</p>
               {profileData.orders.length === 0 ? (
@@ -191,15 +204,15 @@ const Clients = () => {
               ) : (
                 <div className="card overflow-hidden">
                   {profileData.orders.map((o, i) => (
-                    <div key={o._id} className={`flex items-center gap-4 px-4 py-3 ${i !== 0 ? 'border-t border-sand-100' : ''}`}>
+                    <div key={o.id} className={`flex items-center gap-4 px-4 py-3 ${i !== 0 ? 'border-t border-sand-100' : ''}`}>
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-medium text-atelier-dark">{o.items?.[0]?.name || 'Order'}</p>
-                        <p className="text-[11px] text-sand-400 mt-0.5">{new Date(o.orderDate).toLocaleDateString('fr-MA')}</p>
+                        <p className="text-[11px] text-sand-400 mt-0.5">{o.order_date ? new Date(o.order_date).toLocaleDateString('fr-MA') : '—'}</p>
                       </div>
                       <StatusBadge status={o.status} />
                       <div className="text-right shrink-0">
-                        <p className="text-[13px] font-semibold text-atelier-dark">{fmt(o.totalPrice)} MAD</p>
-                        {o.remainingAmount > 0 && <p className="text-[11px] text-red-500">{fmt(o.remainingAmount)} left</p>}
+                        <p className="text-[13px] font-semibold text-atelier-dark">{fmt(o.total_price)} MAD</p>
+                        {o.remaining_amount > 0 && <p className="text-[11px] text-red-500">{fmt(o.remaining_amount)} left</p>}
                       </div>
                     </div>
                   ))}
@@ -211,7 +224,7 @@ const Clients = () => {
       </Modal>
 
       <ConfirmDialog isOpen={modal === 'delete'} onClose={closeModal} onConfirm={handleDelete} loading={saving}
-        title="Delete Client" message={`Remove "${selected?.fullName}"? This action cannot be undone.`} />
+        title="Delete Client" message={`Remove "${selected?.full_name}"? This action cannot be undone.`} />
     </div>
   );
 };

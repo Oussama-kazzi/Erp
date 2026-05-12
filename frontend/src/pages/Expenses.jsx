@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { Home, Zap, Package, Truck, Wrench, Users, CreditCard, Plus } from 'lucide-react';
-import api from '../api';
+import { supabase } from '../lib/supabase';
+import { logHistory } from '../lib/history';
 import Modal from '../components/ui/Modal';
 import FormInput from '../components/ui/FormInput';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
@@ -12,24 +13,16 @@ const fmt = (n) => new Intl.NumberFormat('fr-MA').format(n ?? 0);
 const cats = ['rent', 'utilities', 'materials', 'transport', 'maintenance', 'salary', 'other'];
 const catOpts = cats.map(c => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) }));
 const empty = { title: '', category: 'other', amount: '', date: new Date().toISOString().split('T')[0], note: '' };
-
 const PALETTE = ['#B8936A', '#8A7B6F', '#C8BDB4', '#6B5E54', '#D4A87A', '#A89A8E', '#4A3F38'];
 
 const CAT_ICON = {
-  rent:        Home,
-  utilities:   Zap,
-  materials:   Package,
-  transport:   Truck,
-  maintenance: Wrench,
-  salary:      Users,
-  other:       CreditCard,
+  rent: Home, utilities: Zap, materials: Package, transport: Truck,
+  maintenance: Wrench, salary: Users, other: CreditCard,
 };
-
 const CatIcon = ({ category, className = 'w-4 h-4' }) => {
   const Icon = CAT_ICON[category] || CreditCard;
   return <Icon className={className} strokeWidth={1.5} />;
 };
-
 const CustomTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -52,10 +45,11 @@ const Expenses = () => {
   const fetchExpenses = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (catFilter) params.category = catFilter;
-      const res = await api.get('/expenses', { params });
-      setExpenses(res.data);
+      let query = supabase.from('expenses').select('*').order('date', { ascending: false });
+      if (catFilter) query = query.eq('category', catFilter);
+      const { data, error } = await query;
+      if (error) throw error;
+      setExpenses(data || []);
     } catch { toast.error('Failed to load expenses'); }
     finally { setLoading(false); }
   }, [catFilter]);
@@ -70,18 +64,28 @@ const Expenses = () => {
   const handleSave = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      if (modal === 'add') await api.post('/expenses', form);
-      else await api.put(`/expenses/${selected._id}`, form);
+      const payload = { title: form.title, category: form.category, amount: Number(form.amount) || 0, date: form.date, note: form.note };
+      if (modal === 'add') {
+        const { data, error } = await supabase.from('expenses').insert(payload).select().single();
+        if (error) throw error;
+        await logHistory({ action: 'created', module: 'expense', description: `Expense "${form.title}" — ${fmt(form.amount)} MAD`, referenceId: data.id });
+      } else {
+        await supabase.from('expenses').update(payload).eq('id', selected.id);
+        await logHistory({ action: 'updated', module: 'expense', description: `Expense "${form.title}" updated`, referenceId: selected.id });
+      }
       toast.success(modal === 'add' ? 'Expense recorded' : 'Updated');
       closeModal(); fetchExpenses();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.message || 'Error'); }
     finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     setSaving(true);
-    try { await api.delete(`/expenses/${selected._id}`); toast.success('Removed'); closeModal(); fetchExpenses(); }
-    catch { toast.error('Error'); } finally { setSaving(false); }
+    try {
+      await supabase.from('expenses').delete().eq('id', selected.id);
+      await logHistory({ action: 'deleted', module: 'expense', description: `Expense "${selected.title}" removed` });
+      toast.success('Removed'); closeModal(); fetchExpenses();
+    } catch { toast.error('Error'); } finally { setSaving(false); }
   };
 
   const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
@@ -92,7 +96,6 @@ const Expenses = () => {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-3">
           <div className="card px-4 py-2.5 flex items-center gap-2">
@@ -111,7 +114,6 @@ const Expenses = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Pie chart */}
         <div className="card p-5 flex flex-col">
           <h3 className="section-title text-[16px] mb-4">By Category</h3>
           {pieData.length === 0 ? (
@@ -148,20 +150,11 @@ const Expenses = () => {
           )}
         </div>
 
-        {/* Expense list */}
         <div className="card lg:col-span-2 overflow-hidden">
-          {/* Category filter */}
           <div className="p-4 border-b border-sand-100 flex items-center gap-1.5 flex-wrap">
             {[{ value: '', label: 'All' }, ...catOpts].map(o => (
-              <button
-                key={o.value}
-                onClick={() => setCatFilter(o.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                  catFilter === o.value
-                    ? 'bg-atelier-dark text-white'
-                    : 'bg-sand-100 text-sand-600 hover:bg-sand-200'
-                }`}
-              >
+              <button key={o.value} onClick={() => setCatFilter(o.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${catFilter === o.value ? 'bg-atelier-dark text-white' : 'bg-sand-100 text-sand-600 hover:bg-sand-200'}`}>
                 {o.value && <CatIcon category={o.value} className="w-3 h-3" />}
                 {o.label}
               </button>
@@ -182,7 +175,7 @@ const Expenses = () => {
           ) : (
             <div className="divide-y divide-sand-100">
               {expenses.map(exp => (
-                <div key={exp._id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-sand-50 transition-colors group">
+                <div key={exp.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-sand-50 transition-colors group">
                   <div className="w-9 h-9 rounded-xl bg-sand-100 flex items-center justify-center text-sand-500 shrink-0">
                     <CatIcon category={exp.category} />
                   </div>
@@ -195,7 +188,7 @@ const Expenses = () => {
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-[13px] font-semibold text-atelier-dark">{fmt(exp.amount)} MAD</p>
-                    <p className="text-[11px] text-sand-400 mt-0.5">{new Date(exp.date).toLocaleDateString('fr-MA')}</p>
+                    <p className="text-[11px] text-sand-400 mt-0.5">{exp.date ? new Date(exp.date).toLocaleDateString('fr-MA') : '—'}</p>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                     <button onClick={() => openEdit(exp)} className="w-7 h-7 flex items-center justify-center rounded-lg text-sand-400 hover:text-atelier-dark hover:bg-sand-100 transition-colors">
@@ -212,7 +205,6 @@ const Expenses = () => {
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
       <Modal isOpen={modal === 'add' || modal === 'edit'} onClose={closeModal} title={modal === 'add' ? 'Record Expense' : 'Edit Expense'} size="sm">
         <form onSubmit={handleSave} className="space-y-4">
           <FormInput label="Description" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} required placeholder="e.g. Oak planks purchase" />

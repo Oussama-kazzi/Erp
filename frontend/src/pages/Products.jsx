@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { Package, Plus, AlertTriangle, History, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
-import api from '../api';
+import { supabase } from '../lib/supabase';
+import { logHistory } from '../lib/history';
 import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
 import SearchInput from '../components/ui/SearchInput';
@@ -9,18 +10,17 @@ import FormInput from '../components/ui/FormInput';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 
 const fmt = (n) => new Intl.NumberFormat('fr-MA').format(n ?? 0);
-const IMG_BASE = `${import.meta.env.VITE_API_URL || ''}/uploads/`;
-const empty = { name: '', category: '', supplier: '', quantity: 0, lowStockThreshold: 5, costPrice: 0, sellingPrice: 0, status: 'available', notes: '' };
+const empty = { name: '', category: '', supplier: '', quantity: 0, low_stock_threshold: 5, cost_price: 0, selling_price: 0, status: 'available', notes: '' };
 const statusOpts = [{ value: 'available', label: 'Available' }, { value: 'reserved', label: 'Reserved' }, { value: 'sold', label: 'Sold' }];
 
-const ProductImage = ({ image, name, className = '' }) => {
+const ProductImage = ({ image_url, name, className = '' }) => {
   const [err, setErr] = useState(false);
-  if (!image || err) return (
+  if (!image_url || err) return (
     <div className={`bg-sand-100 flex items-center justify-center text-sand-300 ${className}`}>
       <Package className="w-8 h-8" strokeWidth={1} />
     </div>
   );
-  return <img src={IMG_BASE + image} alt={name} onError={() => setErr(true)} className={`object-cover ${className}`} />;
+  return <img src={image_url} alt={name} onError={() => setErr(true)} className={`object-cover ${className}`} />;
 };
 
 const LowStockBadge = () => (
@@ -49,11 +49,12 @@ const Products = () => {
   const fetchProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (search) params.name = search;
-      if (statusFilter) params.status = statusFilter;
-      const res = await api.get('/products', { params });
-      setProducts(res.data);
+      let query = supabase.from('products').select('*').order('created_at', { ascending: false });
+      if (search) query = query.ilike('name', `%${search}%`);
+      if (statusFilter) query = query.eq('status', statusFilter);
+      const { data, error } = await query;
+      if (error) throw error;
+      setProducts(data || []);
     } catch { toast.error('Failed to load products'); }
     finally { setLoading(false); }
   }, [search, statusFilter]);
@@ -61,7 +62,13 @@ const Products = () => {
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
   const openAdd = () => { setForm(empty); setImageFile(null); setImagePreview(null); setModal('add'); };
-  const openEdit = (p) => { setForm(p); setSelected(p); setImageFile(null); setImagePreview(p.image ? IMG_BASE + p.image : null); setModal('edit'); };
+  const openEdit = (p) => {
+    setForm(p);
+    setSelected(p);
+    setImageFile(null);
+    setImagePreview(p.image_url || null);
+    setModal('edit');
+  };
   const openDelete = (p) => { setSelected(p); setModal('delete'); };
 
   const openStock = (p, type) => {
@@ -75,8 +82,13 @@ const Products = () => {
     setStockMovements([]);
     setModal('history');
     try {
-      const res = await api.get('/stock-movements', { params: { productId: p._id } });
-      setStockMovements(res.data.movements || res.data);
+      const { data, error } = await supabase
+        .from('stock_movements')
+        .select('*')
+        .eq('product_id', p.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setStockMovements(data || []);
     } catch { toast.error('Failed to load stock history'); }
   };
 
@@ -89,41 +101,94 @@ const Products = () => {
     setImagePreview(URL.createObjectURL(file));
   };
 
+  const uploadImage = async (file) => {
+    const ext = file.name.split('.').pop();
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabase.storage.from('products').upload(filename, file, { upsert: false });
+    if (error) throw error;
+    const { data } = supabase.storage.from('products').getPublicUrl(filename);
+    return data.publicUrl;
+  };
+
   const handleSave = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => {
-        if (!['image', '_id', '__v', 'createdAt', 'updatedAt'].includes(k) && v != null) fd.append(k, v);
-      });
-      if (imageFile) fd.append('image', imageFile);
-      if (modal === 'add') await api.post('/products', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      else await api.put(`/products/${selected._id}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      let image_url = form.image_url || null;
+      if (imageFile) {
+        image_url = await uploadImage(imageFile);
+      }
+      const payload = {
+        name: form.name,
+        category: form.category || null,
+        supplier: form.supplier || null,
+        quantity: Number(form.quantity) || 0,
+        low_stock_threshold: Number(form.low_stock_threshold) || 5,
+        cost_price: Number(form.cost_price) || 0,
+        selling_price: Number(form.selling_price) || 0,
+        status: form.status || 'available',
+        notes: form.notes || null,
+        image_url,
+      };
+      if (modal === 'add') {
+        const { data, error } = await supabase.from('products').insert(payload).select().single();
+        if (error) throw error;
+        await logHistory({ action: 'created', module: 'product', description: `Product "${form.name}" added to stock`, referenceId: data.id });
+      } else {
+        const { error } = await supabase.from('products').update(payload).eq('id', selected.id);
+        if (error) throw error;
+        await logHistory({ action: 'updated', module: 'product', description: `Product "${form.name}" updated`, referenceId: selected.id });
+      }
       toast.success(modal === 'add' ? 'Product added' : 'Product updated');
       closeModal(); fetchProducts();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.message || 'Error'); }
     finally { setSaving(false); }
   };
 
   const handleStockMovement = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      await api.post('/stock-movements', { ...stockForm, product: selected._id });
+      const qty = Number(stockForm.quantity) || 0;
+      const { error: mvErr } = await supabase.from('stock_movements').insert({
+        product_id: selected.id,
+        type: stockForm.type,
+        quantity: qty,
+        reason: stockForm.reason || null,
+        supplier: stockForm.supplier || null,
+      });
+      if (mvErr) throw mvErr;
+
+      const newQty = stockForm.type === 'IN'
+        ? selected.quantity + qty
+        : Math.max(0, selected.quantity - qty);
+      const { error: upErr } = await supabase.from('products').update({ quantity: newQty }).eq('id', selected.id);
+      if (upErr) throw upErr;
+
+      const action = stockForm.type === 'IN' ? 'stock_in' : 'stock_out';
+      await logHistory({
+        action,
+        module: 'product',
+        description: `${stockForm.type === 'IN' ? '+' : '−'}${qty} pcs for "${selected.name}"${stockForm.reason ? ` — ${stockForm.reason}` : ''}`,
+        referenceId: selected.id,
+      });
       toast.success(stockForm.type === 'IN' ? 'Stock restocked' : 'Stock used');
       closeModal(); fetchProducts();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.message || 'Error'); }
     finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     setSaving(true);
-    try { await api.delete(`/products/${selected._id}`); toast.success('Product removed'); closeModal(); fetchProducts(); }
-    catch { toast.error('Error'); } finally { setSaving(false); }
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', selected.id);
+      if (error) throw error;
+      await logHistory({ action: 'deleted', module: 'product', description: `Product "${selected.name}" removed` });
+      toast.success('Product removed'); closeModal(); fetchProducts();
+    } catch { toast.error('Error'); } finally { setSaving(false); }
   };
 
-  const isLowStock = (p) => p != null && p.status === 'available' && p.quantity <= (p.lowStockThreshold ?? 5);
+  const isLowStock = (p) => p != null && p.status === 'available' && p.quantity <= (p.low_stock_threshold ?? 5);
   const totalStock = products.filter(p => p.status === 'available').reduce((s, p) => s + p.quantity, 0);
-  const stockValue = products.filter(p => p.status === 'available').reduce((s, p) => s + p.quantity * p.costPrice, 0);
+  const stockValue = products.filter(p => p.status === 'available').reduce((s, p) => s + p.quantity * p.cost_price, 0);
   const lowCount = products.filter(isLowStock).length;
 
   return (
@@ -194,9 +259,9 @@ const Products = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
             {products.map((p) => (
-              <div key={p._id} className="card overflow-hidden group card-hover">
+              <div key={p.id} className="card overflow-hidden group card-hover">
                 <div className="aspect-[4/3] relative overflow-hidden">
-                  <ProductImage image={p.image} name={p.name} className="w-full h-full transition-transform duration-300 group-hover:scale-105" />
+                  <ProductImage image_url={p.image_url} name={p.name} className="w-full h-full transition-transform duration-300 group-hover:scale-105" />
                   <div className="absolute top-2.5 right-2.5">
                     <StatusBadge status={p.status} />
                   </div>
@@ -211,8 +276,8 @@ const Products = () => {
                   {p.category && <p className="text-xs text-sand-400 mt-0.5">{p.category}</p>}
                   <div className="flex items-center justify-between mt-3">
                     <div>
-                      <p className="text-base font-semibold text-atelier-dark">{fmt(p.sellingPrice)} <span className="text-xs font-normal text-sand-400">MAD</span></p>
-                      <p className="text-[10px] text-sand-400">Cost: {fmt(p.costPrice)} MAD</p>
+                      <p className="text-base font-semibold text-atelier-dark">{fmt(p.selling_price)} <span className="text-xs font-normal text-sand-400">MAD</span></p>
+                      <p className="text-[10px] text-sand-400">Cost: {fmt(p.cost_price)} MAD</p>
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-sand-400">Qty</p>
@@ -220,7 +285,6 @@ const Products = () => {
                     </div>
                   </div>
 
-                  {/* Stock action buttons */}
                   <div className="flex gap-1.5 mt-3 pt-3 border-t border-sand-100">
                     <button onClick={() => openStock(p, 'IN')} className="btn-secondary btn-sm flex-1 justify-center text-emerald-700 hover:bg-emerald-50 hover:border-emerald-200" title="Restock">
                       <ArrowDownToLine className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -259,10 +323,10 @@ const Products = () => {
             </tr></thead>
             <tbody>
               {products.map((p) => (
-                <tr key={p._id} className="table-row">
+                <tr key={p.id} className="table-row">
                   <td className="table-td w-12">
                     <div className="w-10 h-10 rounded-xl overflow-hidden">
-                      <ProductImage image={p.image} name={p.name} className="w-full h-full" />
+                      <ProductImage image_url={p.image_url} name={p.name} className="w-full h-full" />
                     </div>
                   </td>
                   <td className="table-td">
@@ -274,11 +338,11 @@ const Products = () => {
                   <td className="table-td text-sand-500">{p.category || '—'}</td>
                   <td className="table-td text-sand-500">{p.supplier || '—'}</td>
                   <td className={`table-td font-medium ${isLowStock(p) ? 'text-amber-600' : ''}`}>{p.quantity}</td>
-                  <td className="table-td">{fmt(p.costPrice)} MAD</td>
-                  <td className="table-td font-medium">{fmt(p.sellingPrice)} MAD</td>
+                  <td className="table-td">{fmt(p.cost_price)} MAD</td>
+                  <td className="table-td font-medium">{fmt(p.selling_price)} MAD</td>
                   <td className="table-td">
-                    <span className={p.sellingPrice - p.costPrice >= 0 ? 'text-emerald-600 font-medium' : 'text-red-500'}>
-                      {fmt(p.sellingPrice - p.costPrice)} MAD
+                    <span className={p.selling_price - p.cost_price >= 0 ? 'text-emerald-600 font-medium' : 'text-red-500'}>
+                      {fmt(p.selling_price - p.cost_price)} MAD
                     </span>
                   </td>
                   <td className="table-td"><StatusBadge status={p.status} /></td>
@@ -310,7 +374,6 @@ const Products = () => {
       {/* Add/Edit Modal */}
       <Modal isOpen={modal === 'add' || modal === 'edit'} onClose={closeModal} title={modal === 'add' ? 'Add Product' : 'Edit Product'} size="lg">
         <form onSubmit={handleSave} className="space-y-5">
-          {/* Image upload */}
           <div>
             <label className="label">Product Image</label>
             <div className="flex items-center gap-4">
@@ -326,7 +389,7 @@ const Products = () => {
                   {imagePreview ? 'Change image' : 'Upload image'}
                 </label>
                 {imagePreview && (
-                  <button type="button" onClick={() => { setImageFile(null); setImagePreview(null); setForm({ ...form, image: null }); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                  <button type="button" onClick={() => { setImageFile(null); setImagePreview(null); setForm({ ...form, image_url: null }); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                     className="block text-xs text-red-400 hover:text-red-600 transition-colors">Remove</button>
                 )}
                 <p className="text-xs text-sand-400">JPG, PNG, WEBP · max 5MB</p>
@@ -339,9 +402,9 @@ const Products = () => {
             <FormInput label="Category" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} placeholder="e.g. Seating, Tables..." />
             <FormInput label="Supplier / Material" value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })} />
             <FormInput label="Quantity" type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} />
-            <FormInput label="Low Stock Alert (qty)" type="number" value={form.lowStockThreshold} onChange={e => setForm({ ...form, lowStockThreshold: e.target.value })} />
-            <FormInput label="Cost Price (MAD)" type="number" value={form.costPrice} onChange={e => setForm({ ...form, costPrice: e.target.value })} />
-            <FormInput label="Selling Price (MAD)" type="number" value={form.sellingPrice} onChange={e => setForm({ ...form, sellingPrice: e.target.value })} />
+            <FormInput label="Low Stock Alert (qty)" type="number" value={form.low_stock_threshold} onChange={e => setForm({ ...form, low_stock_threshold: e.target.value })} />
+            <FormInput label="Cost Price (MAD)" type="number" value={form.cost_price} onChange={e => setForm({ ...form, cost_price: e.target.value })} />
+            <FormInput label="Selling Price (MAD)" type="number" value={form.selling_price} onChange={e => setForm({ ...form, selling_price: e.target.value })} />
             <div>
               <label className="label">Status</label>
               <select className="input" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
@@ -414,7 +477,7 @@ const Products = () => {
         ) : (
           <div className="space-y-2">
             {stockMovements.map((m, i) => (
-              <div key={m._id || i} className="flex items-center gap-4 p-3 rounded-xl bg-sand-50">
+              <div key={m.id || i} className="flex items-center gap-4 p-3 rounded-xl bg-sand-50">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${m.type === 'IN' ? 'bg-emerald-100' : 'bg-orange-100'}`}>
                   {m.type === 'IN'
                     ? <ArrowDownToLine className="w-4 h-4 text-emerald-600" strokeWidth={1.5} />
@@ -430,7 +493,7 @@ const Products = () => {
                   </div>
                   {m.supplier && <p className="text-[11px] text-sand-400 mt-0.5">From: {m.supplier}</p>}
                 </div>
-                <span className="text-[11px] text-sand-400 shrink-0">{new Date(m.createdAt).toLocaleDateString('fr-MA')}</span>
+                <span className="text-[11px] text-sand-400 shrink-0">{new Date(m.created_at).toLocaleDateString('fr-MA')}</span>
               </div>
             ))}
           </div>

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import api from '../api';
+import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
@@ -8,30 +8,36 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('erp_token');
-    if (token) {
-      api.get('/auth/me')
-        .then((res) => setUser(res.data))
-        .catch(() => localStorage.removeItem('erp_token'))
-        .finally(() => setLoading(false));
-    } else {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
       setLoading(false);
-    }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const login = async (email, password) => {
-    const res = await api.post('/auth/login', { email, password });
-    localStorage.setItem('erp_token', res.data.token);
-    setUser(res.data.user);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    setUser(data.user);
   };
 
-  const logout = () => {
-    localStorage.removeItem('erp_token');
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
   };
 
+  const normalizedUser = user ? {
+    ...user,
+    name: user.user_metadata?.name || user.email?.split('@')[0] || 'Admin',
+  } : null;
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user: normalizedUser, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

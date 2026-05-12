@@ -8,7 +8,7 @@ import {
   ShieldCheck, Users, FileText, Receipt, Activity,
   TrendingUp,
 } from 'lucide-react';
-import api from '../api';
+import { supabase } from '../lib/supabase';
 import DashboardCard from '../components/ui/DashboardCard';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
@@ -16,31 +16,24 @@ import { useAuth } from '../context/AuthContext';
 const fmt = (n) => new Intl.NumberFormat('fr-MA', { minimumFractionDigits: 0 }).format(n ?? 0);
 
 const MODULE_ICONS = {
-  order:   ClipboardList,
-  worker:  Hammer,
-  supplier: Truck,
-  expense: Wallet,
-  product: Package,
-  auth:    ShieldCheck,
-  client:  Users,
-  quote:   FileText,
-  invoice: Receipt,
+  order: ClipboardList, worker: Hammer, supplier: Truck,
+  expense: Wallet, product: Package, auth: ShieldCheck,
+  client: Users, quote: FileText, invoice: Receipt,
 };
-
 const MODULE_LABELS = {
   order: 'Order', worker: 'Craftsman', supplier: 'Supplier',
   expense: 'Finance', product: 'Stock', auth: 'Auth',
   client: 'Client', quote: 'Quote', invoice: 'Invoice',
 };
-
 const ACTION_STYLE = {
-  created:   { label: 'Created',  cls: 'text-emerald-700 bg-emerald-50' },
-  updated:   { label: 'Updated',  cls: 'text-blue-700 bg-blue-50' },
-  deleted:   { label: 'Deleted',  cls: 'text-red-600 bg-red-50' },
-  payment:   { label: 'Payment',  cls: 'text-bronze-700 bg-bronze-50' },
-  stock_in:  { label: 'In',       cls: 'text-teal-700 bg-teal-50' },
-  stock_out: { label: 'Out',      cls: 'text-orange-700 bg-orange-50' },
-  converted: { label: 'Converted',cls: 'text-violet-700 bg-violet-50' },
+  created:   { label: 'Created',   cls: 'text-emerald-700 bg-emerald-50' },
+  updated:   { label: 'Updated',   cls: 'text-blue-700 bg-blue-50' },
+  deleted:   { label: 'Deleted',   cls: 'text-red-600 bg-red-50' },
+  payment:   { label: 'Payment',   cls: 'text-bronze-700 bg-bronze-50' },
+  stock_in:  { label: 'In',        cls: 'text-teal-700 bg-teal-50' },
+  stock_out: { label: 'Out',       cls: 'text-orange-700 bg-orange-50' },
+  converted: { label: 'Converted', cls: 'text-violet-700 bg-violet-50' },
+  rejected:  { label: 'Rejected',  cls: 'text-rose-700 bg-rose-50' },
 };
 
 const ModuleIcon = ({ module }) => {
@@ -69,7 +62,74 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/dashboard').then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    const load = async () => {
+      try {
+        const [
+          { data: invoices },
+          { data: expensesData },
+          { data: workersData },
+          { data: ordersData },
+          { data: productsData },
+          { data: historyData },
+        ] = await Promise.all([
+          supabase.from('invoices').select('paid_amount, remaining_amount, created_at'),
+          supabase.from('expenses').select('amount, date'),
+          supabase.from('workers').select('task_price, completed_quantity, paid_amount'),
+          supabase.from('orders').select('status, created_at'),
+          supabase.from('products').select('quantity, low_stock_threshold, status'),
+          supabase.from('history').select('*').order('created_at', { ascending: false }).limit(10),
+        ]);
+
+        const totalIncome = (invoices || []).reduce((s, i) => s + (i.paid_amount || 0), 0);
+        const remainingUnpaid = (invoices || []).reduce((s, i) => s + (i.remaining_amount || 0), 0);
+        const totalExpenses = (expensesData || []).reduce((s, e) => s + (e.amount || 0), 0);
+        const workersUnpaid = (workersData || []).reduce((s, w) => {
+          const earned = (w.task_price || 0) * (w.completed_quantity || 0);
+          return s + Math.max(0, earned - (w.paid_amount || 0));
+        }, 0);
+        const paidOrders = (ordersData || []).filter(o => o.status === 'delivered').length;
+        const pendingOrders = (ordersData || []).filter(o => !['delivered', 'cancelled'].includes(o.status)).length;
+        const readyNotSold = (productsData || [])
+          .filter(p => p.status === 'available')
+          .reduce((s, p) => s + (p.quantity || 0), 0);
+        const lowStockCount = (productsData || [])
+          .filter(p => (p.quantity || 0) <= (p.low_stock_threshold || 5)).length;
+
+        // Chart: last 6 months
+        const months = [];
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date();
+          d.setMonth(d.getMonth() - i);
+          months.push({
+            month: d.toLocaleString('fr-FR', { month: 'short' }),
+            year: d.getFullYear(),
+            m: d.getMonth() + 1,
+          });
+        }
+        const chartData = months.map(({ month, year, m }) => {
+          const income = (invoices || [])
+            .filter(inv => { const d = new Date(inv.created_at); return d.getFullYear() === year && d.getMonth() + 1 === m; })
+            .reduce((s, inv) => s + (inv.paid_amount || 0), 0);
+          const expenses = (expensesData || [])
+            .filter(exp => { const d = new Date(exp.date); return d.getFullYear() === year && d.getMonth() + 1 === m; })
+            .reduce((s, exp) => s + (exp.amount || 0), 0);
+          const orders = (ordersData || [])
+            .filter(ord => { const d = new Date(ord.created_at); return d.getFullYear() === year && d.getMonth() + 1 === m; }).length;
+          return { month, income, expenses, orders };
+        });
+
+        setData({
+          stats: { totalIncome, totalExpenses, remainingUnpaid, workersUnpaid, paidOrders, pendingOrders, readyNotSold, lowStockCount },
+          chartData,
+          recentActivity: historyData || [],
+        });
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
   }, []);
 
   if (loading) return (
@@ -84,8 +144,6 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-5">
-
-      {/* Welcome */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sand-400 text-[13px] mb-0.5">{greeting},</p>
@@ -97,41 +155,22 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Primary stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <DashboardCard
-          accent
-          title="Revenue"
-          value={`${fmt(stats?.totalIncome)} MAD`}
-          subtitle="Payments received"
-          icon={<TrendingUp className="w-5 h-5 text-bronze-300" strokeWidth={1.5} />}
-        />
-        <DashboardCard
-          title="Expenses"
-          value={`${fmt(stats?.totalExpenses)} MAD`}
-          subtitle="Total outgoings"
-          icon={<Wallet className="w-5 h-5 text-sand-400" strokeWidth={1.5} />}
-        />
-        <DashboardCard
-          title="Receivable"
-          value={`${fmt(stats?.remainingUnpaid)} MAD`}
-          subtitle="Owed by clients"
-          icon={<Receipt className="w-5 h-5 text-sand-400" strokeWidth={1.5} />}
-        />
-        <DashboardCard
-          title="Atelier Payroll"
-          value={`${fmt(stats?.workersUnpaid)} MAD`}
-          subtitle="Owed to craftsmen"
-          icon={<Hammer className="w-5 h-5 text-sand-400" strokeWidth={1.5} />}
-        />
+        <DashboardCard accent title="Revenue" value={`${fmt(stats?.totalIncome)} MAD`} subtitle="Payments received"
+          icon={<TrendingUp className="w-5 h-5 text-bronze-300" strokeWidth={1.5} />} />
+        <DashboardCard title="Expenses" value={`${fmt(stats?.totalExpenses)} MAD`} subtitle="Total outgoings"
+          icon={<Wallet className="w-5 h-5 text-sand-400" strokeWidth={1.5} />} />
+        <DashboardCard title="Receivable" value={`${fmt(stats?.remainingUnpaid)} MAD`} subtitle="Owed by clients"
+          icon={<Receipt className="w-5 h-5 text-sand-400" strokeWidth={1.5} />} />
+        <DashboardCard title="Atelier Payroll" value={`${fmt(stats?.workersUnpaid)} MAD`} subtitle="Owed to craftsmen"
+          icon={<Hammer className="w-5 h-5 text-sand-400" strokeWidth={1.5} />} />
       </div>
 
-      {/* Secondary stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Completed Orders', value: stats?.paidOrders ?? 0, desc: 'Fully settled' },
+          { label: 'Completed Orders', value: stats?.paidOrders ?? 0,    desc: 'Fully settled' },
           { label: 'Active Orders',    value: stats?.pendingOrders ?? 0, desc: 'In production' },
-          { label: 'Stock Units',      value: fmt(stats?.readyNotSold), desc: 'Available inventory' },
+          { label: 'Stock Units',      value: fmt(stats?.readyNotSold),  desc: 'Available inventory' },
           { label: 'Low Stock Alerts', value: stats?.lowStockCount ?? 0, desc: 'Below threshold', warn: (stats?.lowStockCount ?? 0) > 0 },
         ].map((s) => (
           <div key={s.label} className="card px-4 py-4">
@@ -142,10 +181,7 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Charts + Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-        {/* Area chart */}
         <div className="card p-5 lg:col-span-2">
           <div className="mb-5">
             <h3 className="section-title text-[16px]">Financial Overview</h3>
@@ -173,7 +209,6 @@ const Dashboard = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Activity feed */}
         <div className="card p-5 flex flex-col">
           <h3 className="section-title text-[16px] mb-4">Recent Activity</h3>
           {!recentActivity?.length ? (
@@ -185,7 +220,7 @@ const Dashboard = () => {
               {recentActivity.map((item) => {
                 const action = ACTION_STYLE[item.action] || { label: item.action, cls: 'text-sand-500 bg-sand-100' };
                 return (
-                  <div key={item._id} className="flex items-start gap-3">
+                  <div key={item.id} className="flex items-start gap-3">
                     <div className="w-7 h-7 rounded-lg bg-sand-100 flex items-center justify-center text-sand-500 shrink-0 mt-0.5">
                       <ModuleIcon module={item.module} />
                     </div>
@@ -204,7 +239,6 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Bar chart */}
       <div className="card p-5">
         <div className="mb-4">
           <h3 className="section-title text-[16px]">Order Volume</h3>

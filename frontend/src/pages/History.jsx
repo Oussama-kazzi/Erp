@@ -4,26 +4,18 @@ import {
   ClipboardList, Hammer, Truck, Wallet, Package,
   ShieldCheck, Users, FileText, Receipt, Activity,
 } from 'lucide-react';
-import api from '../api';
+import { supabase } from '../lib/supabase';
 
 const MODULE_ICON_MAP = {
-  order:    ClipboardList,
-  worker:   Hammer,
-  supplier: Truck,
-  expense:  Wallet,
-  product:  Package,
-  auth:     ShieldCheck,
-  client:   Users,
-  quote:    FileText,
-  invoice:  Receipt,
+  order: ClipboardList, worker: Hammer, supplier: Truck,
+  expense: Wallet, product: Package, auth: ShieldCheck,
+  client: Users, quote: FileText, invoice: Receipt,
 };
-
 const MODULE_LABEL = {
   order: 'Order', worker: 'Craftsman', supplier: 'Supplier',
   expense: 'Finance', product: 'Stock', auth: 'Auth',
   client: 'Client', quote: 'Quote', invoice: 'Invoice',
 };
-
 const ACTION_CONFIG = {
   created:   { label: 'Created',   color: 'text-emerald-700', bg: 'bg-emerald-50',  dot: 'bg-emerald-500' },
   updated:   { label: 'Updated',   color: 'text-blue-700',    bg: 'bg-blue-50',     dot: 'bg-blue-500' },
@@ -54,11 +46,12 @@ const History = () => {
   const fetchHistory = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (moduleFilter) params.module = moduleFilter;
-      if (actionFilter) params.action = actionFilter;
-      const res = await api.get('/history', { params });
-      setHistory(res.data);
+      let query = supabase.from('history').select('*').order('created_at', { ascending: false }).limit(200);
+      if (moduleFilter) query = query.eq('module', moduleFilter);
+      if (actionFilter) query = query.eq('action', actionFilter);
+      const { data, error } = await query;
+      if (error) throw error;
+      setHistory(data || []);
     } catch { toast.error('Failed to load activity'); }
     finally { setLoading(false); }
   }, [moduleFilter, actionFilter]);
@@ -68,7 +61,7 @@ const History = () => {
   const groupByDate = (items) => {
     const groups = {};
     items.forEach(item => {
-      const date = new Date(item.createdAt).toLocaleDateString('en-US', {
+      const date = new Date(item.created_at).toLocaleDateString('en-US', {
         weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
       });
       if (!groups[date]) groups[date] = [];
@@ -80,19 +73,14 @@ const History = () => {
   const grouped = groupByDate(history);
 
   const FilterBtn = ({ active, onClick, children }) => (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-        active ? 'bg-white shadow-warm-xs text-atelier-dark' : 'text-sand-500 hover:text-sand-700'
-      }`}
-    >
+    <button onClick={onClick}
+      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${active ? 'bg-white shadow-warm-xs text-atelier-dark' : 'text-sand-500 hover:text-sand-700'}`}>
       {children}
     </button>
   );
 
   return (
     <div className="space-y-5">
-      {/* Filters */}
       <div className="card p-4 flex flex-col gap-3">
         <div className="flex flex-wrap gap-1 bg-sand-100 p-1 rounded-xl">
           <FilterBtn active={moduleFilter === ''} onClick={() => setModuleFilter('')}>All modules</FilterBtn>
@@ -114,7 +102,6 @@ const History = () => {
 
       <p className="text-[11px] text-sand-400 uppercase tracking-wide px-1">{history.length} entries</p>
 
-      {/* Timeline */}
       {loading ? (
         <div className="flex justify-center py-16">
           <div className="w-7 h-7 border-2 border-sand-200 border-t-bronze-400 rounded-full animate-spin" />
@@ -135,17 +122,12 @@ const History = () => {
                 <div className="flex-1 h-px bg-sand-200" />
                 <span className="text-[10px] text-sand-400 bg-sand-100 px-2 py-0.5 rounded-full">{items.length}</span>
               </div>
-
               <div className="card overflow-hidden">
                 {items.map((item, i) => {
-                  const action = ACTION_CONFIG[item.action] || {
-                    label: item.action, color: 'text-sand-600', bg: 'bg-sand-100', dot: 'bg-sand-400',
-                  };
+                  const action = ACTION_CONFIG[item.action] || { label: item.action, color: 'text-sand-600', bg: 'bg-sand-100', dot: 'bg-sand-400' };
                   return (
-                    <div
-                      key={item._id}
-                      className={`flex items-start gap-4 px-5 py-3.5 hover:bg-sand-50 transition-colors ${i !== 0 ? 'border-t border-sand-100' : ''}`}
-                    >
+                    <div key={item.id}
+                      className={`flex items-start gap-4 px-5 py-3.5 hover:bg-sand-50 transition-colors ${i !== 0 ? 'border-t border-sand-100' : ''}`}>
                       <div className="w-8 h-8 rounded-xl bg-sand-100 flex items-center justify-center text-sand-500 shrink-0 mt-0.5">
                         <ModuleIcon module={item.module} />
                       </div>
@@ -158,10 +140,10 @@ const History = () => {
                           <span className="text-[11px] text-sand-400">{MODULE_LABEL[item.module] || item.module}</span>
                         </div>
                         <p className="text-[13px] text-atelier-dark leading-snug">{item.description}</p>
-                        {item.user && <p className="text-[11px] text-sand-400 mt-0.5">by {item.user}</p>}
+                        {item.user_name && <p className="text-[11px] text-sand-400 mt-0.5">by {item.user_name}</p>}
                       </div>
                       <p className="text-[11px] text-sand-400 shrink-0 tabular-nums mt-0.5">
-                        {new Date(item.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(item.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
                   );
