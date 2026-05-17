@@ -169,7 +169,7 @@ const Workers = () => {
                   </p>
                 )}
 
-                <div className="grid grid-cols-3 gap-2 text-center mb-4 mt-auto">
+                <div className="grid grid-cols-3 gap-2 text-center mb-3 mt-auto">
                   {[
                     { label: 'Earned', value: `${fmt(earned)} MAD` },
                     { label: 'Paid', value: `${fmt(w.paid_amount)} MAD` },
@@ -181,6 +181,22 @@ const Workers = () => {
                     </div>
                   ))}
                 </div>
+
+                {(() => {
+                  const pct = earned > 0 ? Math.min(100, ((w.paid_amount || 0) / earned) * 100) : 0;
+                  const barColor = status === 'paid' ? 'bg-emerald-500' : status === 'partial' ? 'bg-bronze-400' : 'bg-sand-300';
+                  return (
+                    <div className="mb-3">
+                      <div className="flex justify-between text-[10px] text-sand-400 mb-1">
+                        <span>Payment progress</span>
+                        <span>{Math.round(pct)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-sand-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="pt-3 border-t border-sand-100 flex gap-2">
                   <button onClick={() => openPay(w)} className="btn-primary btn-sm flex-1 justify-center">Pay</button>
